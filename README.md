@@ -29,3 +29,4 @@ Each in a different <b>terminal</b>, or through <b>PyCharm</b>
 <li>python mine.py</li>
 <li>python app0.py</li>
 <li>python app1.py</li>
+<li>python mongoq.py</li>
