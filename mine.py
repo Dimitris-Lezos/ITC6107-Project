@@ -66,6 +66,8 @@ def create_block(message: string) -> json:
 def main():
     try:
         kafka_producer = connect_kafka()
+        # Replace client_socket with a Spark Stream that reads every 120 seconds
+        # Can we parallelize the Hashing with Spark?
         client_socket = connect_server()
         while True:
             # Receive data from the server
