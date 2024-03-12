@@ -76,6 +76,7 @@ def main():
             if None == message or len(message) == 0:
                 break
             block = create_block(message)
+            # THIS is a bug, because the szer serializer expects a Dictionary, not a JSON object!
             kafka_producer.send(_TOPIC, block, partition=_PARTITION_0)
             print(f"[*] Send block to Kafka: {block}")
     except Exception as e:
