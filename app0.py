@@ -21,6 +21,7 @@ _PARTITION_0 = 0
 #                          value_deserializer=szer)
 # consumer.assign([TopicPartition(_TOPIC, _PARTITION_0)])
 
+# Added the following to test MongoDB connection
 consumer = ['{message: "Block 1"}']
 
 # Create the connection to MongoDB
