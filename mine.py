@@ -23,8 +23,12 @@ to partition 1.
 import socket
 import string
 import json
+from array import array
+from hashlib import sha256
+
 from kafka import KafkaProducer
 from json import dumps
+from concurrent.futures import ProcessPoolExecutor
 
 print(__doc__)
 
@@ -33,6 +37,7 @@ _HOST = 'localhost'
 _TOPIC = 'Blocks'
 _PARTITION_0 = 0
 _PARTITION_1 = 1
+_BYTE_RANGE = 2**8
 
 def connect_server(host=_HOST, port=_PORT) -> socket:
     """Returns a socket that receives messages from host:port"""
@@ -63,6 +68,10 @@ def create_block(message: string) -> json:
     ''')
 
 
+def calculate_hash(nonce: int) -> string:
+    return str(bytes("", 'utf-8')+nonce.to_bytes(4), 'utf-8')
+
+
 def main():
     try:
         kafka_producer = connect_kafka()
@@ -85,5 +94,48 @@ def main():
         # Close the socket connection
         client_socket.close()
 
+
+#def calculate_sha(sha: sha256(), nonce: range) -> None:
+def calculate_sha(text: bytes, nonce: range) -> None:
+    sha = sha256(text)
+    for i in range(2**32):
+        i_sha = sha.copy()
+        i_sha.update(i.to_bytes(4))
+        digest = i_sha.hexdigest()
+        # if digest.startswith('00000'):
+        #     print(0, i_sha.hexdigest())
+        if digest.startswith('000000'):
+            print(i, i_sha.hexdigest())
+            break
+
 if __name__ == "__main__":
-    main()
+    # #main()
+    # nonce = 2**32-2
+    # print(nonce.to_bytes(4))
+    # sha = sha256(b'abcd')
+    # for i in range(2**32):
+    #     i_sha = sha.copy()
+    #     i_sha.update(i.to_bytes(4))
+    #     #print(i, i_sha.digest())
+    #     digest = i_sha.hexdigest()
+    #     if digest.startswith('00000'):
+    #         print(0, i_sha.hexdigest())
+    #     if digest.startswith('000000'):
+    #         print(i, i_sha.hexdigest())
+    #         break
+    # print(i)
+    t_sha = sha256(b'This is the initial text')
+    texts = []
+    ranges = []
+    step = (2**32)//10
+    for i in range(0, 10):
+        texts.append(b'This is the initial text')
+        ranges.append(range(i*step, (i+1)*step))
+    result = None
+    with ProcessPoolExecutor(max_workers=10) as executor:
+        futures = executor.map(calculate_sha, texts, ranges)
+        # f = executor.submit(calculate_sha, ranges[0][0], ranges[0][1])
+        # f.result()
+    # for f in futures:
+    #     f.result()
+    print('end')
