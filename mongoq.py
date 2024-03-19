@@ -13,65 +13,63 @@ from json import dumps
 from pymongo import MongoClient
 from bson.son import SON
 
+# MongoDB configuration
+client = MongoClient('localhost', 27017)
+db = client['blockchain']
+blocks_collection = db['blocks']
 
-print(__doc__)
-
-_PORT = 9999
-_HOST = 'localhost'
-_TOPIC = 'Blocks'
-_PARTITION_0 = 0
-_PARTITION_1 = 1
-
-def connect_server(host=_HOST, port=_PORT) -> socket:
-    """Returns a socket that receives messages from host:port"""
-    # Create a socket object
-    client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    try:
-        # Connect to the server
-        client_socket.connect((host, port))
-        print(f"[*] Connected to {host}:{port}")
-    except Exception as e:
-        print(f"Error: {e}")
-    return client_socket
-
-
-def connect_kafka() -> KafkaProducer:
-    """Connects to Kafka and returns a Producer"""
-    szer = lambda x: dumps(x).encode('utf-8')
-    producer = KafkaProducer(bootstrap_servers=['localhost:9092'], value_serializer=szer)
-    # bin/kafka-topics.sh --create --topic Blocks --partitions 2 --bootstrap-server localhost:9092
-    return producer
-
-
-def create_block(message: string) -> json:
-    return json.loads('''
-        {
-            "message": "''' + message + '''"
+def get_block_info(serial_number):
+    block = blocks_collection.find_one({"sequence_number": serial_number})
+    if block:
+        return {
+            "nonce": block["nonce"],
+            "digest": block["digest"],
+            "num_transactions": block["num_transactions"]
         }
-    ''')
+    else:
+        return "Block not found"
 
+def get_block_with_smallest_mining_time():
+    block = blocks_collection.find_one(sort=[("time_to_mine", 1)])
+    return block
 
-def main():
-    try:
-        kafka_producer = connect_kafka()
-        # Replace client_socket with a Spark Stream that reads every 120 seconds
-        # Can we parallelize the Hashing with Spark?
-        client_socket = connect_server()
-        while True:
-            # Receive data from the server
-            message = client_socket.recv(1024).decode('utf-8')
-            print(f"[*] Received message from the server: {message}")
-            if None == message or len(message) == 0:
-                break
-            block = create_block(message)
-            # THIS is a bug, because the szer serializer expects a Dictionary, not a JSON object!
-            kafka_producer.send(_TOPIC, block, partition=_PARTITION_0)
-            print(f"[*] Send block to Kafka: {block}")
-    except Exception as e:
-        print(f"Error: {e}")
-    finally:
-        # Close the socket connection
-        client_socket.close()
+def get_average_and_cumulative_mining_time():
+    pipeline = [
+        {"$group": {"_id": None, "avg_time": {"$avg": "$time_to_mine"}, "total_time": {"$sum": "$time_to_mine"}}}
+    ]
+    result = list(blocks_collection.aggregate(pipeline))
+    if result:
+        return result[0]
+    else:
+        return {"avg_time": 0, "total_time": 0}
+
+def get_block_with_most_transactions():
+    pipeline = [
+        {"$sort": {"num_transactions": -1}},
+        {"$limit": 1}
+    ]
+    block = list(blocks_collection.aggregate(pipeline))
+    return block
+
 
 if __name__ == "__main__":
-    main()
+    # Query 1
+    print("Query 1:")
+    block_serial_number = 5  # Example block serial number
+    print(get_block_info(block_serial_number))
+    # Query 2
+    print("\nQuery 2:")
+    print(get_block_with_smallest_mining_time())
+    # Query 3
+    print("\nQuery 3:")
+    print(get_average_and_cumulative_mining_time())
+    # Query 4
+    print("\nQuery 4:")
+    print(get_block_with_most_transactions())
+
+
+
+
+
+
+
