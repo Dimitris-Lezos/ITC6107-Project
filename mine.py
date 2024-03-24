@@ -47,6 +47,29 @@ def connect_server(host=_HOST, port=_PORT) -> socket:
     return client_socket
 
 
+def run_spark_listener():
+    # Create SparkContext and StreamingContext
+    sc = SparkContext("local[2]", "BlockchainMining")
+    ssc = StreamingContext(sc, 120)  # 2-minute batch interval
+
+    # Initialize an empty RDD for blockchain
+    blockchain = sc.parallelize([])
+
+    # Create a socket DStream to listen for transactions
+    transactions_stream = ssc.socketTextStream("localhost", 9999)
+
+    # Process transactions and mine blocks
+    transactions_stream.window(120).transform(lambda rdd:
+                                              rdd.union(blockchain.flatMap(lambda block: block.transactions))
+                                              .map(lambda transaction: mine_block(transaction, blockchain)))
+    # Print the blockchain when a new block is mined
+    blockchain.foreach(lambda rdd: print_blockchain(rdd))
+
+    # Start the StreamingContext
+    ssc.start()
+    ssc.awaitTermination()
+
+
 def connect_kafka() -> KafkaProducer:
     """Connects to Kafka and returns a Producer"""
     szer = lambda x: dumps(x).encode('utf-8')
@@ -62,6 +85,37 @@ def create_block(message: string) -> json:
         }
     ''')
 
+
+"""
+Once a nonce is found the block is constructed as a quintuple that contains
+1. The block serial number.
+2. The list of transactions that are contained in the block.
+3. The value of the nonce that resulted to the successful mining of the block.
+4. The block’s digest.
+5. The time it took to mine the block.
+"""
+
+"""
+The very first block of the chain, the genesis block, is hand crafted. 
+You may consider that the only transaction it contains is the string ‘Genesis block’, 
+its sequence number is 0 and the hash of the previous block is the string ‘0’ 
+as no previous block exists.
+"""
+
+"""
+Each time a block is mined all information about the block is written to a Kafka topic “Blocks” 
+as a JSON object, which must contain the following:
+1. The block serial number.
+2. The number of transactions that are contained in the block.
+3. The block nonce.
+4. The block’s digest.
+5. The time it took to mine the block.
+"""
+
+"""
+Topic “Blocks” contains two partitions: 0 and 1. Mined blocks with even serial numbers 
+are written to partition 0 and blocks with odd serial numbers are written to partition 1.
+"""
 
 def main():
     try:
