@@ -23,16 +23,23 @@ to partition 1.
 import socket
 import string
 import json
+import threading
+import time
+
 from kafka import KafkaProducer
 from json import dumps
 
+from pyspark.streaming import StreamingContext
+
+from parameters import _PORT, _HOST, _TOPIC, _PARTITION_0, _PARTITION_1
+from pyspark import SparkContext, RDD
+
 print(__doc__)
 
-_PORT = 9999
-_HOST = 'localhost'
-_TOPIC = 'Blocks'
-_PARTITION_0 = 0
-_PARTITION_1 = 1
+_MAX_INT = 2**32
+_HASH_TARGET = '0000'
+_PROCESSORS = 10
+
 
 def connect_server(host=_HOST, port=_PORT) -> socket:
     """Returns a socket that receives messages from host:port"""
@@ -47,23 +54,30 @@ def connect_server(host=_HOST, port=_PORT) -> socket:
     return client_socket
 
 
-def run_spark_listener():
-    # Create SparkContext and StreamingContext
-    sc = SparkContext("local[2]", "BlockchainMining")
-    ssc = StreamingContext(sc, 120)  # 2-minute batch interval
+def solve_block(messages: []) -> None:
+    print('Sleeping for 20 seconds, data:', len(messages))
+    time.sleep(20)
+    print('Finished: ', len(messages))
 
-    # Initialize an empty RDD for blockchain
-    blockchain = sc.parallelize([])
+
+def collect(rdd:RDD) -> None:
+    # Create a thread that will solve the block
+    solver = threading.Thread(target=solve_block, args=[rdd.collect()])
+    solver.start()
+
+
+def run_spark_listener(host=_HOST, port=_PORT):
+    # Create SparkContext and StreamingContext
+    sc = SparkContext("local[5]", "BlockchainMine")
+    # Read messages every 5 #10 seconds
+    ssc = StreamingContext(sc, 1) #10)
 
     # Create a socket DStream to listen for transactions
-    transactions_stream = ssc.socketTextStream("localhost", 9999)
+    transactions_stream = ssc.socketTextStream(host, port)
 
     # Process transactions and mine blocks
-    transactions_stream.window(120).transform(lambda rdd:
-                                              rdd.union(blockchain.flatMap(lambda block: block.transactions))
-                                              .map(lambda transaction: mine_block(transaction, blockchain)))
-    # Print the blockchain when a new block is mined
-    blockchain.foreach(lambda rdd: print_blockchain(rdd))
+    # Take all messages in the last 10 #120 seconds
+    transactions_stream.window(10,10).foreachRDD(collect)
 
     # Start the StreamingContext
     ssc.start()
@@ -118,6 +132,12 @@ are written to partition 0 and blocks with odd serial numbers are written to par
 """
 
 def main():
+    run_spark_listener()
+    # # Create a thread that listens for connections
+    # listener = threading.Thread(target=run_spark_listener)
+    # listener.start()
+    # listener.join()
+
     try:
         kafka_producer = connect_kafka()
         # Replace client_socket with a Spark Stream that reads every 120 seconds

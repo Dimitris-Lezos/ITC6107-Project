@@ -23,6 +23,12 @@ All provided code needs more work especially <b>mine.py</b>
 <b>Check if exists:</b> bin/kafka-topics.sh --topic Blocks --describe --bootstrap-server localhost:9092
 <br/>
 <b>Create if needed:</b> bin/kafka-topics.sh --create --topic Blocks --partitions 2 --bootstrap-server localhost:9092
+<h2>Start Spark</h2>
+<li>As described in the slides provided by the Professor</li>
+<li>In my local environment I use Spark on <b>Docker</b>:</li>
+<b>Installation:</b> docker pull spark:python3
+<br/>
+<b>Run:</b> docker run --name spark -it --rm spark:python3 /opt/spark/bin/pyspark
 <h2>Start the Python components</h2>
 Each in a different <b>terminal</b>, or through <b>PyCharm</b>
 <li>python tr-server.py</li>
