@@ -33,6 +33,8 @@ from kafka import KafkaProducer
 from json import dumps
 from concurrent.futures import ProcessPoolExecutor
 from multiprocessing import Manager
+
+from pymongo import MongoClient
 from pyspark.streaming import StreamingContext
 
 from parameters import _PORT, _HOST, _TOPIC, _PARTITION_0, _PARTITION_1
@@ -82,25 +84,28 @@ def calculate_sha(solved: threading.Event, sequence_number: int, transactions: l
             solved.set()
             return (digest, nonce)
 
-def find_sha(t):
-    i, transactions = t
-    step = _MAX_NONCE//_PROCESSORS
-    nonce_range = range(i*step, (i+1)*step)
-    print(f'i: {i}, Step: {step}, Range:{nonce_range}')
-    print('Finding sha:', nonce_range)
-    sequence_number = last_block_id+1
-    sha = sha256(sequence_number.to_bytes(4))
-    for transaction in transactions:
-        sha.update(transaction.encode())
-    previous_digest = last_block_digest.encode()
-    for nonce in nonce_range:
-        n_sha = sha.copy()
-        n_sha.update(nonce.to_bytes(4))
-        n_sha.update(previous_digest)
-        digest = n_sha.hexdigest()
-        if digest.startswith(_HASH_TARGET):
-            print('Sha found with nonce:', nonce)
-            return (digest, nonce)
+def find_sha(nonce_range, transactions):
+    print('Finding sha:', nonce_range, len(transactions))
+
+    # i, transactions = t
+    # step = _MAX_NONCE//_PROCESSORS
+    # nonce_range = range(i*step, (i+1)*step)
+    # print(f'i: {i}, Step: {step}, Range:{nonce_range}')
+    # print('Finding sha:', nonce_range)
+    # sequence_number = last_block_id+1
+    # sha = sha256(sequence_number.to_bytes(4))
+    # for transaction in transactions:
+    #     sha.update(transaction.encode())
+    # previous_digest = last_block_digest.encode()
+    # for nonce in nonce_range:
+    #     n_sha = sha.copy()
+    #     n_sha.update(nonce.to_bytes(4))
+    #     n_sha.update(previous_digest)
+    #     digest = n_sha.hexdigest()
+    #     if digest.startswith(_HASH_TARGET):
+    #         print('Sha found with nonce:', nonce)
+    #         return (digest, nonce)
+    return ('xxx', 777)
 
 """
 Once a nonce is found the block is constructed as a quintuple that contains
@@ -191,11 +196,23 @@ def solve_block(transactions: []) -> None:
             print(f"    {block['sequence_number']} - {block['digest']} - {block['mining_time']}")
 
 
+sc = None
+
 def collect(rdd:RDD) -> None:
     # Create a thread that will solve the block
-    solver = threading.Thread(target=solve_block, args=[rdd.collect()])
-    solver.start()
-    solver.join()
+    # solver = threading.Thread(target=solve_block, args=[rdd.collect()])
+    # solver.start()
+    # solver.join()
+    global sc
+    transactions = rdd.collect()
+    # Split the nonces to the processors
+    step = _MAX_NONCE // _PROCESSORS
+    nonce_ranges = []
+    for i in range(0, _PROCESSORS):
+      nonce_ranges.append((range(i * step, (i + 1) * step), transactions))
+    hashRDD = sc.parallelize(nonce_ranges)
+    hashRDD.foreach(find_sha)
+
 
 def partition(t) -> list:
     split = []
@@ -204,9 +221,11 @@ def partition(t) -> list:
     return split
 
 
+
 def run_spark_listener(host=_HOST, port=_PORT):
+    global sc
     # Create SparkContext and StreamingContext
-    sc = SparkContext("local[5]", "BlockchainMine")
+    sc = SparkContext("local[12]", "BlockchainMine")
     # Read messages every 5 #10 seconds
     ssc = StreamingContext(sc, 1) #10)
 
@@ -216,14 +235,23 @@ def run_spark_listener(host=_HOST, port=_PORT):
     # Process transactions and mine blocks
     # Take all messages in the last 10 #120 seconds
     transactions_stream.window(10,10).foreachRDD(collect)
-    # block_id = last_block_id+1
-    # transactions_stream.window(
+
+    block_id = last_block_id+1
+    # transactions_stream.repartition(
+    #     _PROCESSORS).window(
     #     10,10).map(
     #     lambda x: [x]).reduce(
     #     lambda x, y: x + y).flatMap(
-    #     lambda t: partition(t)).repartition(
-    #     _PROCESSORS).map(lambda x: find_sha(x)).foreachRDD(
-    #     lambda x: print('-', x.count()))
+    #     lambda t: partition(t)).map(
+    #     lambda x: find_sha(x)).foreachRDD(
+    #     lambda x: print('-', x))
+    transactions_stream.window(
+        10,10).foreachRDD(lambda x: x.pprint())
+        # lambda x: [x]).reduce(
+        # lambda x, y: x + y).flatMap(
+        # lambda t: partition(t)).map(
+        # lambda x: find_sha(x)).foreachRDD(
+        # lambda x: print('-', x))
 
     # Start the StreamingContext
     ssc.start()
@@ -240,8 +268,15 @@ def connect_kafka() -> KafkaProducer:
 def main():
     global kafka_producer
     global last_block_id
+    global last_block_digest
     kafka_producer = connect_kafka()
     # Check if you need to create the genesis block:
+    # MongoDB configuration
+    client = MongoClient('localhost', 27017)
+    db = client['itc6107']
+    blocks_collection = db['blocks']
+    # Get the block with the highest sequence number
+    block = blocks_collection.find_one(sort=[("sequence_number", -1)])
     """
     The very first block of the chain, the genesis block, is hand crafted. 
     You may consider that the only transaction it contains is the string ‘Genesis block’, 
@@ -250,8 +285,12 @@ def main():
     additional blocks can be constructed and added to the blockchain containing transactions 
     from a stream of transactions.
     """
-    if last_block_id == -1:
+    if block is None:
+        last_block_id = -1
         solve_block(['Genesis block'])
+    else:
+        last_block_id = block['sequence_number']
+        last_block_digest = block['digest']
     run_spark_listener()
 
 if __name__ == "__main__":

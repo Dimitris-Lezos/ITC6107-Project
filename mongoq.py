@@ -15,7 +15,7 @@ from bson.son import SON
 
 # MongoDB configuration
 client = MongoClient('localhost', 27017)
-db = client['blockchain']
+db = client['itc6107']
 blocks_collection = db['blocks']
 
 def get_block_info(serial_number):
@@ -24,48 +24,53 @@ def get_block_info(serial_number):
         return {
             "nonce": block["nonce"],
             "digest": block["digest"],
-            "num_transactions": block["num_transactions"]
+            "num_transactions": len(block["transactions"])
         }
     else:
         return "Block not found"
 
 def get_block_with_smallest_mining_time():
-    block = blocks_collection.find_one(sort=[("time_to_mine", 1)])
+    block = blocks_collection.find_one(sort=[("mining_time", 1)])
     return block
 
 def get_average_and_cumulative_mining_time():
     pipeline = [
-        {"$group": {"_id": None, "avg_time": {"$avg": "$time_to_mine"}, "total_time": {"$sum": "$time_to_mine"}}}
+        {"$group": {"_id": None, "avg_time": {"$avg": "$mining_time"}, "total_time": {"$sum": "$mining_time"}}}
     ]
     result = list(blocks_collection.aggregate(pipeline))
     if result:
+        del result[0]["_id"]
         return result[0]
     else:
         return {"avg_time": 0, "total_time": 0}
 
 def get_block_with_most_transactions():
     pipeline = [
+        {"$unwind": "$transactions"},
+        {"$group": {"_id": "$_id", "sequence_number": {"$max": "$sequence_number"}, "num_transactions": {"$sum": 1}}},
         {"$sort": {"num_transactions": -1}},
         {"$limit": 1}
     ]
-    block = list(blocks_collection.aggregate(pipeline))
+    block = list(blocks_collection.aggregate(pipeline))[0]
+    del block["_id"]
     return block
 
 
 if __name__ == "__main__":
-    # Query 1
-    print("Query 1:")
-    block_serial_number = 5  # Example block serial number
-    print(get_block_info(block_serial_number))
-    # Query 2
-    print("\nQuery 2:")
-    print(get_block_with_smallest_mining_time())
-    # Query 3
-    print("\nQuery 3:")
-    print(get_average_and_cumulative_mining_time())
-    # Query 4
-    print("\nQuery 4:")
-    print(get_block_with_most_transactions())
+    while True:
+        try:
+            block_sequence_number = input('\nEnter a block sequence number:')
+            # Query 1
+            print("Block", block_sequence_number, "info:", get_block_info(int(block_sequence_number)))
+            # Query 2
+            print("Smallest mining time:", get_block_with_smallest_mining_time())
+            # Query 3
+            print("Average and Cumulative mining time:", get_average_and_cumulative_mining_time())
+            # Query 4
+            print("Block with most transactions:", get_block_with_most_transactions())
+        except Exception as e:
+            print("Error ", e)
+        print("-----------------------------------------------------------------------")
 
 
 
