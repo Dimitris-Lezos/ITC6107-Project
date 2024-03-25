@@ -5,13 +5,7 @@ Write a Python application in file mongoq.py that answers the following:
 3. Which is the average and cumulative mining time of all blocks mined so far.
 4. Which block(s) has the largest number of transactions in them.
 """
-import socket
-import string
-import json
-from kafka import KafkaProducer
-from json import dumps
 from pymongo import MongoClient
-from bson.son import SON
 
 # MongoDB configuration
 client = MongoClient('localhost', 27017)
