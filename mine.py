@@ -168,11 +168,29 @@ def generate_block(invocation_time, rdd:RDD, transactions=None) -> None:
         for block in blockchain:
             print(f"    {block['sequence_number']} - {block['digest']} - {block['mining_time']}")
 
+def show(t):
+    print(t)
+    # time.sleep(20)
+
+
+def process(rdd: RDD):
+    # print(rdd, rdd.count())
+    # print(rdd.context)
+    id = rdd.id()
+    # print(id, rdd.collect())
+    t = rdd.collect()
+    rdd.context.parallelize([(1, t), (2, t), (3, t)]).foreach(show)
 
 def run_spark_listener(host=_HOST, port=_PORT):
+    """
+    Listens for transactions from host:port
+    :param host: The host to listen to
+    :param port: The port to listen to
+    :return: None
+    """
     global sc
     # Create SparkContext and StreamingContext
-    sc = SparkContext("local[12]", "BlockchainMine")
+    sc = SparkContext("local[*]", "BlockchainMine")
     sc.setLogLevel("ERROR")
     # Read messages every second
     ssc = StreamingContext(sc, 1)
@@ -181,8 +199,33 @@ def run_spark_listener(host=_HOST, port=_PORT):
     transactions_stream = ssc.socketTextStream(host, port)
 
     # Process transactions and mine blocks
-    # Take all messages in the last 10 #120 seconds and pass them
-    transactions_stream.window(10,10).foreachRDD(generate_block)
+    # Take all messages in the last 120 seconds and pass them
+    # transactions_stream.window(120,120).foreachRDD(generate_block)
+    block_id = last_block_id+1
+    # transactions_stream.repartition(
+    #     _PROCESSORS).window(
+    #     10,10).map(
+    #     lambda x: [x]).reduce(
+    #     lambda x, y: x + y).flatMap(
+    #     lambda t: partition(t)).map(
+    #     lambda x: find_sha(x)).foreachRDD(
+    #     lambda x: print('-', x))
+    f = transactions_stream.window(10,10
+    # ).glom(
+    # ).flatMap(lambda t: [(1, t), (2, t), (3, t)]
+    # ).repartition(3
+    # ).partitionBy(3
+    ).foreachRDD(process
+    )
+    # f.filter(lambda x: x[0] == 1).foreachRDD(process)
+    # f.filter(lambda x: x[0] == 2).foreachRDD(process)
+    # f.filter(lambda x: x[0] == 3).foreachRDD(process)
+    #lambda x: print(type(x), x))
+        # lambda x: [x]).reduce(
+        # lambda x, y: x + y).flatMap(
+        # lambda t: partition(t)).map(
+        # lambda x: find_sha(x)).foreachRDD(
+        # lambda x: print('-', x))
 
     # Start the StreamingContext
     ssc.start()

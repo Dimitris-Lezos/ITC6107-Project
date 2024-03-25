@@ -29,7 +29,9 @@ def generate_message(start=int(1), stop=int(64)) -> string:
     :return: a string with length between start and stop containing printable characters, prepended by the current datetime
     """
     now = datetime.datetime.now()
-    s = str(now) + ' ' + ''.join(random.choices(string.ascii_lowercase+string.ascii_uppercase+string.digits, k=random.randrange(start, stop)))
+    s = str(now) + ' ' + ''.join(
+        random.choices(string.ascii_lowercase+string.ascii_uppercase+string.digits,
+                       k=random.randrange(start, stop)))
     return s+'\n'
 
 
