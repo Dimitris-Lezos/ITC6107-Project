@@ -32,18 +32,15 @@ from hashlib import sha256
 from kafka import KafkaProducer
 from json import dumps
 from concurrent.futures import ProcessPoolExecutor
-
+from multiprocessing import Manager
 from pyspark.streaming import StreamingContext
 
 from parameters import _PORT, _HOST, _TOPIC, _PARTITION_0, _PARTITION_1
 from pyspark import SparkContext, RDD
 
-print(__doc__)
-
-_MAX_INT = 2**32
-_HASH_TARGET = '0000'
+_MAX_NONCE = 2**32
+_HASH_TARGET = '000000'
 _PROCESSORS = 10
-_BYTE_RANGE = 2**8
 
 
 def connect_server(host=_HOST, port=_PORT) -> socket:
@@ -59,16 +56,152 @@ def connect_server(host=_HOST, port=_PORT) -> socket:
     return client_socket
 
 
-def solve_block(messages: []) -> None:
-    print('Sleeping for 20 seconds, data:', len(messages))
-    time.sleep(20)
-    print('Finished: ', len(messages))
+# class Solver:
+#     def __init__(self):
+
+
+# Global variables used by the solver
+last_block_id = -1
+last_block_digest = '0'
+
+def calculate_sha(solved: threading.Event, sequence_number: int, transactions: list(), previous_digest: str, nonce_range=range(_MAX_NONCE)) -> (str, int):
+    print('Calculating sha:', nonce_range)
+    sha = sha256(sequence_number.to_bytes(4))
+    for transaction in transactions:
+        sha.update(transaction.encode())
+    previous_digest = previous_digest.encode()
+    for nonce in nonce_range:
+        if nonce % 1000 == 0 and solved.is_set():
+            print('Aborting sha:', nonce_range)
+            return (None, None)
+        n_sha = sha.copy()
+        n_sha.update(nonce.to_bytes(4))
+        n_sha.update(previous_digest)
+        digest = n_sha.hexdigest()
+        if digest.startswith(_HASH_TARGET):
+            solved.set()
+            return (digest, nonce)
+
+def find_sha(t):
+    i, transactions = t
+    step = _MAX_NONCE//_PROCESSORS
+    nonce_range = range(i*step, (i+1)*step)
+    print(f'i: {i}, Step: {step}, Range:{nonce_range}')
+    print('Finding sha:', nonce_range)
+    sequence_number = last_block_id+1
+    sha = sha256(sequence_number.to_bytes(4))
+    for transaction in transactions:
+        sha.update(transaction.encode())
+    previous_digest = last_block_digest.encode()
+    for nonce in nonce_range:
+        n_sha = sha.copy()
+        n_sha.update(nonce.to_bytes(4))
+        n_sha.update(previous_digest)
+        digest = n_sha.hexdigest()
+        if digest.startswith(_HASH_TARGET):
+            print('Sha found with nonce:', nonce)
+            return (digest, nonce)
+
+"""
+Once a nonce is found the block is constructed as a quintuple that contains
+1. The block serial number.
+2. The list of transactions that are contained in the block.
+3. The value of the nonce that resulted to the successful mining of the block.
+4. The block’s digest.
+5. The time it took to mine the block.
+"""
+def create_block(sequence_number: int, transactions: [], nonce: int, digest: str, mining_time: int) -> {}:
+    block = {
+        'sequence_number': sequence_number,
+        'transactions': transactions,
+        'nonce': nonce,
+        'digest': digest,
+        'mining_time': mining_time
+    }
+    return block
+
+# Connection to Kafka
+kafka_producer = None
+blockchain = list()
+
+"""
+For the purposes of this project PoW mining will be used. 
+Then the problem of mining is to find an integer value n (called nonce), such that the digest of the quintuple
+1. the sequence number of the block,
+2. the transactions the block contains,
+3. the value of the nonce,
+4. the value of the digest of the previous block
+has a certain number of leading zeros.
+The only thing that can vary in the previous list (contents of the block) is the value of the nonce.
+The number of leading zeros determines the difficulty level of block mining. The more the number 
+of leading zeros required the more difficult the mining problem becomes. Fr the purposes of the 
+project we assume the level of difficulty to be 3, i.e., 3 leading zeros of the digest.
+"""
+def solve_block(transactions: []) -> None:
+    global last_block_id
+    global last_block_digest
+    print('Solving block: ', last_block_id+1)
+    current_nonce = -1
+    start_time = time.time()
+    # create the manager to coordinate shared objects like the event
+    with Manager() as manager:
+        # create an event to shut down all running tasks
+        solved = manager.Event()
+        # Get all the transactions together
+        step = _MAX_NONCE//_PROCESSORS
+        params_transactions = list()
+        params_sequence_number = list()
+        params_previous_digest = list()
+        params_nonce_range = list()
+        params_solved = list()
+        for i in range(0, _PROCESSORS):
+            params_solved.append(solved)
+            params_sequence_number.append(last_block_id+1)
+            params_transactions.append(transactions)
+            params_previous_digest.append(last_block_digest)
+            params_nonce_range.append(range(i*step, (i+1)*step))
+        with ProcessPoolExecutor(max_workers=_PROCESSORS) as executor:
+            futures = executor.map(calculate_sha,
+                                   params_solved,
+                                   params_sequence_number,
+                                   params_transactions,
+                                   params_previous_digest,
+                                   params_nonce_range)
+        for result in futures:
+            digest, nonce = result
+            if digest is not None:
+                last_block_digest = digest
+                current_nonce = nonce
+        # Get the current_nonce
+        print('Found nonce: ', current_nonce)
+        # Create the block
+        last_block_id = last_block_id+1
+        mining_time = time.time() - start_time
+        block = create_block(last_block_id, transactions, current_nonce, last_block_digest, mining_time)
+        # Write the block to kafka
+        partition = _PARTITION_0
+        if last_block_id % 2 == 1:
+            partition = _PARTITION_1
+        kafka_producer.send(_TOPIC, block, partition=partition)
+        print(f"[*] Send block to Kafka: {block}")
+        blockchain.append(block)
+        # Print the whole blockchain
+        print("Full blockchain:")
+        for block in blockchain:
+            print(f"    {block['sequence_number']} - {block['digest']} - {block['mining_time']}")
 
 
 def collect(rdd:RDD) -> None:
     # Create a thread that will solve the block
     solver = threading.Thread(target=solve_block, args=[rdd.collect()])
     solver.start()
+    solver.join()
+
+def partition(t) -> list:
+    split = []
+    for i in range(_PROCESSORS):
+        split.append((i, t))
+    return split
 
 
 def run_spark_listener(host=_HOST, port=_PORT):
@@ -83,6 +216,14 @@ def run_spark_listener(host=_HOST, port=_PORT):
     # Process transactions and mine blocks
     # Take all messages in the last 10 #120 seconds
     transactions_stream.window(10,10).foreachRDD(collect)
+    # block_id = last_block_id+1
+    # transactions_stream.window(
+    #     10,10).map(
+    #     lambda x: [x]).reduce(
+    #     lambda x, y: x + y).flatMap(
+    #     lambda t: partition(t)).repartition(
+    #     _PROCESSORS).map(lambda x: find_sha(x)).foreachRDD(
+    #     lambda x: print('-', x.count()))
 
     # Start the StreamingContext
     ssc.start()
@@ -96,89 +237,23 @@ def connect_kafka() -> KafkaProducer:
     # bin/kafka-topics.sh --create --topic Blocks --partitions 2 --bootstrap-server localhost:9092
     return producer
 
-
-def create_block(message: string) -> json:
-    return json.loads('''
-        {
-            "message": "''' + message + '''"
-        }
-    ''')
-
-
-def calculate_hash(nonce: int) -> string:
-    return str(bytes("", 'utf-8')+nonce.to_bytes(4), 'utf-8')
-
-
 def main():
+    global kafka_producer
+    global last_block_id
+    kafka_producer = connect_kafka()
+    # Check if you need to create the genesis block:
+    """
+    The very first block of the chain, the genesis block, is hand crafted. 
+    You may consider that the only transaction it contains is the string ‘Genesis block’, 
+    its sequence number is 0 and the hash of the previous block is the string ‘0’ 
+    as no previous block exists. Once the genesis block is constructed and its digest computed, 
+    additional blocks can be constructed and added to the blockchain containing transactions 
+    from a stream of transactions.
+    """
+    if last_block_id == -1:
+        solve_block(['Genesis block'])
     run_spark_listener()
-    # # Create a thread that listens for connections
-    # listener = threading.Thread(target=run_spark_listener)
-    # listener.start()
-    # listener.join()
-
-    try:
-        kafka_producer = connect_kafka()
-        # Replace client_socket with a Spark Stream that reads every 120 seconds
-        # Can we parallelize the Hashing with Spark?
-        client_socket = connect_server()
-        while True:
-            # Receive data from the server
-            message = client_socket.recv(1024).decode('utf-8')
-            print(f"[*] Received message from the server: {message}")
-            if None == message or len(message) == 0:
-                break
-            block = create_block(message)
-            # THIS is a bug, because the szer serializer expects a Dictionary, not a JSON object!
-            kafka_producer.send(_TOPIC, block, partition=_PARTITION_0)
-            print(f"[*] Send block to Kafka: {block}")
-    except Exception as e:
-        print(f"Error: {e}")
-    finally:
-        # Close the socket connection
-        client_socket.close()
-
-
-#def calculate_sha(sha: sha256(), nonce: range) -> None:
-def calculate_sha(text: bytes, nonce: range) -> None:
-    sha = sha256(text)
-    for i in range(2**32):
-        i_sha = sha.copy()
-        i_sha.update(i.to_bytes(4))
-        digest = i_sha.hexdigest()
-        # if digest.startswith('00000'):
-        #     print(0, i_sha.hexdigest())
-        if digest.startswith('000000'):
-            print(i, i_sha.hexdigest())
-            break
 
 if __name__ == "__main__":
-    # #main()
-    # nonce = 2**32-2
-    # print(nonce.to_bytes(4))
-    # sha = sha256(b'abcd')
-    # for i in range(2**32):
-    #     i_sha = sha.copy()
-    #     i_sha.update(i.to_bytes(4))
-    #     #print(i, i_sha.digest())
-    #     digest = i_sha.hexdigest()
-    #     if digest.startswith('00000'):
-    #         print(0, i_sha.hexdigest())
-    #     if digest.startswith('000000'):
-    #         print(i, i_sha.hexdigest())
-    #         break
-    # print(i)
-    t_sha = sha256(b'This is the initial text')
-    texts = []
-    ranges = []
-    step = (2**32)//10
-    for i in range(0, 10):
-        texts.append(b'This is the initial text')
-        ranges.append(range(i*step, (i+1)*step))
-    result = None
-    with ProcessPoolExecutor(max_workers=10) as executor:
-        futures = executor.map(calculate_sha, texts, ranges)
-        # f = executor.submit(calculate_sha, ranges[0][0], ranges[0][1])
-        # f.result()
-    # for f in futures:
-    #     f.result()
-    print('end')
+    print(__doc__)
+    main()
