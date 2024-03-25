@@ -1,13 +1,15 @@
-"""
-Write a Python application in file app0.py that reads partition 0 of
-topic “Blocks” and adds its contents to a MongoDB collection “blocks”.
-"""
 from kafka import KafkaConsumer, TopicPartition
 from json import loads
 from pymongo import MongoClient
 from parameters import _TOPIC
 
-def kafka_to_mongo(partition):
+
+def kafka_to_mongo(partition) -> None:
+    """
+    Reads the provided partition of Kafka an stores the blocks into MongoDB
+    :param partition: The partition to read
+    :return: None
+    """
     # Create the KafkaConsumer
     szer = lambda x: loads(x.decode('utf-8'))
     consumer = KafkaConsumer(#_TOPIC,
@@ -28,6 +30,7 @@ def kafka_to_mongo(partition):
     # Access the database and get a reference to collection "blocks"
     blocks_collection = itc6107_db['blocks']
 
+    # Write the blocks to MongoDB
     for block in consumer:
         print('Received Block from Kafka: ', block)
         blocks_collection.insert_one(block.value)

@@ -18,7 +18,13 @@ client = MongoClient('localhost', 27017)
 db = client['itc6107']
 blocks_collection = db['blocks']
 
+
 def get_block_info(serial_number):
+    """
+    Returns information of a block based on a serial number
+    :param serial_number: The serial number to search for
+    :return: Details of the bockl with the provided serial number
+    """
     block = blocks_collection.find_one({"sequence_number": serial_number})
     if block:
         return {
@@ -29,11 +35,21 @@ def get_block_info(serial_number):
     else:
         return "Block not found"
 
+
 def get_block_with_smallest_mining_time():
+    """
+    Returns the block with the smallest mining time
+    :return: the block with the smallest mining time
+    """
     block = blocks_collection.find_one(sort=[("mining_time", 1)])
     return block
 
+
 def get_average_and_cumulative_mining_time():
+    """
+    Returns the average and cumulative mining time
+    :return: the average and cumulative mining time
+    """
     pipeline = [
         {"$group": {"_id": None, "avg_time": {"$avg": "$mining_time"}, "total_time": {"$sum": "$mining_time"}}}
     ]
@@ -44,7 +60,12 @@ def get_average_and_cumulative_mining_time():
     else:
         return {"avg_time": 0, "total_time": 0}
 
+
 def get_block_with_most_transactions():
+    """
+    Returns the block with the most transactions
+    :return: the block with the most transactions
+    """
     pipeline = [
         {"$unwind": "$transactions"},
         {"$group": {"_id": "$_id", "sequence_number": {"$max": "$sequence_number"}, "num_transactions": {"$sum": 1}}},
